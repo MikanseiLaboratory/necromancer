@@ -12,9 +12,9 @@ use std::fmt::Display;
 
 /// `_ver`: protocol version (`CapabilitiesVersion`)
 ///
-/// The only supported firmware version is 2.30. ATEM SDK disconnects on other
-/// firmware versions, and there are enough changes in data structures for this
-/// to be a pain. :(
+/// Supported protocol versions are 2.30 through 2.32 (ATEM software 8.1.1
+/// through 9.6). Other versions are rejected: the data structures move enough
+/// that a wrong parser will desynchronise the session.
 ///
 /// ## Packet format
 ///
@@ -36,8 +36,8 @@ impl Display for Version {
 
 impl Version {
     pub fn check_firmware_version(&self) -> Result<()> {
-        // FIXME: cut/fade to black on 2.31
-        if self.major != 2 || self.minor < 30 || self.minor > 31 {
+        // FIXME: cut/fade to black is unreliable on 2.31 and later.
+        if self.major != 2 || !(30..=32).contains(&self.minor) {
             return Err(Error::UnsupportedFirmwareVersion(*self));
         }
 
@@ -137,6 +137,26 @@ mod test {
         o.write(&mut out)?;
         assert_eq!(cmd, out.into_inner());
         Ok(())
+    }
+
+    #[test]
+    fn firmware_version_range() {
+        for minor in 30..=32 {
+            assert!(
+                Version { major: 2, minor }
+                    .check_firmware_version()
+                    .is_ok(),
+                "2.{minor} should be accepted"
+            );
+        }
+
+        for version in [
+            Version { major: 2, minor: 29 },
+            Version { major: 2, minor: 33 },
+            Version { major: 1, minor: 32 },
+        ] {
+            assert!(version.check_firmware_version().is_err());
+        }
     }
 
     #[test]

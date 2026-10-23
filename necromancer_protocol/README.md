@@ -1,7 +1,8 @@
 # necromancer_protocol &emsp; [![Latest Version]][crates.io] [![Docs version]][docs.rs]
 
 `necromancer_protocol` implements the low-level data structures for Blackmagic Design ATEM video
-switchers' control protocol (BEP/BURP), targeting protocol version 2.30 (ATEM Mini firmware v8.6+).
+switchers' control protocol (BEP/BURP), targeting protocol versions 2.30 through 2.32
+(ATEM software 8.1.1 through 9.6).
 
 <div class="warning">
 

@@ -30,4 +30,6 @@ pub enum PortType {
     Mask = 0x82,
     /// MultiView output port.
     Multiview = 0x83,
+    /// Audio monitor output. Present from protocol 2.31 (ATEM software 9.4).
+    AudioMonitor = 0x84,
 }
