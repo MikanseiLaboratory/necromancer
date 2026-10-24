@@ -94,7 +94,7 @@ pub use self::{
         CutToBlack, FadeToBlackAuto, FadeToBlackParams, FadeToBlackStatus, SetFadeToBlackParams,
     },
     initialisation::InitialisationComplete,
-    inpr::InputProperties,
+    inpr::{InputProperties, MeAvailability, SourceAvailability},
     macros::MacroCapabilities,
     media_player::{
         CaptureStill, MediaPlayerCapabilities, MediaPlayerFrameDescription, MediaPlayerSource,
