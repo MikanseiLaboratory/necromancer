@@ -3,8 +3,9 @@ use crate::{
         atom::{
             Atom, ColourGeneratorParams, DskConfigParameters, DskCurrentState, DskInputSelection,
             FadeToBlackStatus, FairlightAudioMixerInputSourceProperties, InputProperties,
-            MediaPlayerCapabilities, MediaPlayerFrameDescription, MediaPlayerSourceID,
-            MixEffectBlockCapabilities, Payload, ProductName, Topology, TransitionPosition, Version,
+            MeAvailability, MediaPlayerCapabilities, MediaPlayerFrameDescription,
+            MediaPlayerSourceID, MixEffectBlockCapabilities, Payload, ProductName,
+            SourceAvailability, Topology, TransitionPosition, Version,
         },
         structs::{DVETransitionStyle, EqualiserRange, TallyFlags, VideoMode, VideoSource},
     },
@@ -537,6 +538,28 @@ impl AtemState {
         &self.aux_sources
     }
 
+    /// Source-routing availability reported for `source`.
+    ///
+    /// Returns [`None`] when no [`InputProperties`] have been received for
+    /// `source` yet. The value is the high byte of
+    /// [`InputProperties::availability3`].
+    pub fn get_source_availability(&self, source: VideoSource) -> Option<SourceAvailability> {
+        self.input_properties
+            .get(&source)
+            .map(InputProperties::source_availability)
+    }
+
+    /// Mix-effect availability reported for `source`.
+    ///
+    /// Returns [`None`] when no [`InputProperties`] have been received for
+    /// `source` yet. The value is the low byte of
+    /// [`InputProperties::availability3`].
+    pub fn get_me_availability(&self, source: VideoSource) -> Option<MeAvailability> {
+        self.input_properties
+            .get(&source)
+            .map(InputProperties::me_availability)
+    }
+
     pub const fn get_fade_to_black_status(&self, me: u8) -> Option<FadeToBlackStatus> {
         if me >= self.topology.mes {
             return None;
@@ -653,5 +676,96 @@ impl std::fmt::Debug for AtemState {
                 &self.fairlight_audio_mixer_input_props,
             )
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::protocol::atom::Atom;
+    use binrw::BinRead;
+    use std::io::Cursor;
+
+    fn apply_inpr(state: &mut AtemState, payload: &str) -> crate::Result<()> {
+        let mut cmd = hex::decode("002c0000496e5072")?;
+        cmd.extend(hex::decode(payload)?);
+        let atom = Atom::read(&mut Cursor::new(&cmd))?;
+        let updated = state.update_state(std::slice::from_ref(&atom))?;
+        assert!(updated.contains(StateUpdate::INPUT_PROPERTIES));
+        Ok(())
+    }
+
+    #[test]
+    fn input_availability_from_captured_inpr() -> crate::Result<()> {
+        let mut state = AtemState::default();
+
+        // Input 1 = 0x1101: auxiliary | key source, M/E 1.
+        apply_inpr(
+            &mut state,
+            "000143616d657261203100000000000000000000000043414d3101000002000200001101",
+        )?;
+        assert_eq!(
+            Some(
+                SourceAvailability::new()
+                    .with_auxiliary(true)
+                    .with_key_source(true)
+            ),
+            state.get_source_availability(VideoSource::Input1)
+        );
+        assert_eq!(
+            Some(MeAvailability::new().with_me1(true)),
+            state.get_me_availability(VideoSource::Input1)
+        );
+
+        // Colour bars = 0x1001: key source, M/E 1.
+        apply_inpr(
+            &mut state,
+            "03e8436f6c6f722042617273000000000000000000004241525301000100010002001001",
+        )?;
+        assert_eq!(
+            Some(SourceAvailability::new().with_key_source(true)),
+            state.get_source_availability(VideoSource::ColourBars)
+        );
+        assert_eq!(
+            Some(MeAvailability::new().with_me1(true)),
+            state.get_me_availability(VideoSource::ColourBars)
+        );
+
+        // Input 1 direct = 0x0100: auxiliary only.
+        apply_inpr(
+            &mut state,
+            "2af94c6170746f702048444d492044697265637400004449520000000002000207000100",
+        )?;
+        assert_eq!(
+            Some(SourceAvailability::new().with_auxiliary(true)),
+            state.get_source_availability(VideoSource::Input1Direct)
+        );
+        assert_eq!(
+            Some(MeAvailability::new()),
+            state.get_me_availability(VideoSource::Input1Direct)
+        );
+
+        // Colour 1 = 0x0001: M/E 1 only.
+        apply_inpr(
+            &mut state,
+            "07d1436f6c6f72203100000000000000000000000000434f4c3101000100010003000001",
+        )?;
+        assert_eq!(
+            Some(SourceAvailability::new()),
+            state.get_source_availability(VideoSource::Colour1)
+        );
+        assert_eq!(
+            Some(MeAvailability::new().with_me1(true)),
+            state.get_me_availability(VideoSource::Colour1)
+        );
+
+        assert_eq!(None, state.get_source_availability(VideoSource::Input2));
+        assert_eq!(None, state.get_me_availability(VideoSource::Input2));
+        // Earlier inputs stay addressable after later InPr atoms.
+        assert!(state
+            .get_source_availability(VideoSource::Input1)
+            .is_some_and(|availability| availability.auxiliary() && availability.key_source()));
+
+        Ok(())
     }
 }
