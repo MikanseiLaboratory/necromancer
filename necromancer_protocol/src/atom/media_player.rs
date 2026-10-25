@@ -1,6 +1,6 @@
-//! # Media player; 5/19 atoms
+//! # Media player; 6/19 atoms
 //!
-//! ## Unimplemented atoms (14)
+//! ## Unimplemented atoms (13)
 //!
 //! FourCC | Atom name | Length
 //! ------ | --------- | ------
@@ -10,7 +10,6 @@
 //! `CMPS` | `ChangeMediaPlayerSetup` | 0x10
 //! `CSTL` | `ClearMediaPlayerStill` | 0xc
 //! `MPAS` | `MediaPlayerAudioEntry` | 0x5c
-//! `MPCS` | `MediaPlayerClipStatus` | 0x4c
 //! `MPfM` | `MediaPlayerImageFrameMultiEntry` | 0x12 + (0x1 * entries)
 //! `MPSp` | `MediaPlayerSetup` | 0x14
 //! `RCPS` | `MediaPlayerClipPlayStatus` | 0x10
@@ -185,6 +184,61 @@ impl Debug for MediaPlayerFrameDescription {
     }
 }
 
+/// `MPCS`: media pool clip description (`MediaPoolClipDescription`)
+///
+/// Sent once per clip slot after connecting, and again when a clip is set or
+/// cleared. This is the only place the wire protocol carries a clip name:
+/// `MPfe` describes stills, and `RCPS` only reports playback state.
+///
+/// ## Packet format
+///
+/// Fixed length, 0x4c bytes.
+///
+/// * `u8`: clip index
+/// * `u8`: is used (`1` when the slot holds a clip)
+/// * `char[64]`: clip name, null-terminated, padded with nulls
+/// * `u16`: frame count
+#[binrw]
+#[brw(big)]
+#[derive(Default, PartialEq, Eq, Clone)]
+pub struct MediaPoolClipDescription {
+    /// Clip slot this describes.
+    pub index: u8,
+
+    #[br(map = |v: u8| v != 0)]
+    #[bw(map = |v: &bool| Into::<u8>::into(*v))]
+    pub is_used: bool,
+
+    #[br(try_map = |v: [u8; 64]| str_from_utf8_null(&v).map(str::to_string))]
+    #[bw(map = |v: &String| name_bytes(v))]
+    pub name: String,
+
+    pub frames: u16,
+}
+
+/// Pad `name` into the fixed 64 byte field.
+fn name_bytes(name: &str) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    let bytes = name.as_bytes();
+    let len = bytes.len().min(64);
+    out[..len].copy_from_slice(&bytes[..len]);
+    out
+}
+
+impl Debug for MediaPoolClipDescription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut b = f.debug_struct("MediaPoolClipDescription");
+
+        b.field("index", &self.index)
+            .field("is_used", &self.is_used)
+            .field("frames", &self.frames);
+        if self.is_used {
+            b.field("name", &self.name);
+        }
+        b.finish()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use binrw::{BinRead, BinWrite};
@@ -271,6 +325,70 @@ mod test {
         let mut out = Cursor::new(Vec::with_capacity(cmd.len()));
         o.write(&mut out)?;
         assert_eq!(cmd, out.into_inner());
+        Ok(())
+    }
+
+    #[test]
+    fn media_pool_clip_description() -> Result<()> {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        // Occupied slot. Layout after the 8 byte header:
+        // index (1), is_used (1), name (64, null padded), frames (2) = 0x48 payload.
+        let mut payload = Vec::new();
+        payload.push(1); // index
+        payload.push(1); // is_used
+        let mut name = [0u8; 64];
+        name[..16].copy_from_slice(b"opening-loop.mov");
+        payload.extend_from_slice(&name);
+        payload.extend_from_slice(&1500u16.to_be_bytes());
+        assert_eq!(payload.len(), 68);
+
+        let mut cmd = Vec::new();
+        cmd.extend_from_slice(&76u16.to_be_bytes()); // 0x4c, including the header
+        cmd.extend_from_slice(&[0, 0]);
+        cmd.extend_from_slice(b"MPCS");
+        cmd.extend_from_slice(&payload);
+
+        let expected = MediaPoolClipDescription {
+            index: 1,
+            is_used: true,
+            name: "opening-loop.mov".to_string(),
+            frames: 1500,
+        };
+        let mpcs = Atom::read(&mut Cursor::new(&cmd))?;
+        let Payload::MediaPoolClipDescription(mpcs) = mpcs.payload else {
+            panic!("wrong command type");
+        };
+        assert_eq!(expected, mpcs);
+
+        let o = Atom::new(expected);
+        let mut out = Cursor::new(Vec::with_capacity(cmd.len()));
+        o.write(&mut out)?;
+        assert_eq!(cmd, out.into_inner());
+
+        Ok(())
+    }
+
+    #[test]
+    fn media_pool_clip_description_empty_slot() -> Result<()> {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        let mut cmd: Vec<u8> = hex::decode("004c00004d504353030000")?;
+        cmd.resize(0x4c, 0);
+        let mpcs = Atom::read(&mut Cursor::new(&cmd))?;
+        let Payload::MediaPoolClipDescription(mpcs) = mpcs.payload else {
+            panic!("wrong command type");
+        };
+        assert_eq!(
+            mpcs,
+            MediaPoolClipDescription {
+                index: 3,
+                is_used: false,
+                name: "".to_string(),
+                frames: 0,
+            }
+        );
+
         Ok(())
     }
 
