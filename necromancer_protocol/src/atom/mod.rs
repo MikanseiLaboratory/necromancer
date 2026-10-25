@@ -101,7 +101,7 @@ pub use self::{
     macros::MacroCapabilities,
     media_player::{
         CaptureStill, MediaPlayerCapabilities, MediaPlayerFrameDescription, MediaPlayerSource,
-        MediaPlayerSourceID, SetMediaPlayerSource, CAPTURE_STILL,
+        MediaPlayerSourceID, MediaPoolClipDescription, SetMediaPlayerSource, CAPTURE_STILL,
     },
     mfg_test::{MfgTest, MfgTestResult},
     mix_effect::{
@@ -296,6 +296,7 @@ atom_payloads!(
     b"MfgR" => MfgTestResult,
     b"MfgT" => MfgTest,
     b"MPCE" => MediaPlayerSource,
+    b"MPCS" => MediaPoolClipDescription,
     b"MPfe" => MediaPlayerFrameDescription,
     b"MPSS" => SetMediaPlayerSource,
     b"PrgI" => ProgramInput,

@@ -4,8 +4,8 @@ use crate::{
             Atom, ColourGeneratorParams, DskConfigParameters, DskCurrentState, DskInputSelection,
             FadeToBlackStatus, FairlightAudioMixerInputSourceProperties, InputProperties,
             MeAvailability, MediaPlayerCapabilities, MediaPlayerFrameDescription,
-            MediaPlayerSourceID, MixEffectBlockCapabilities, Payload, ProductName,
-            SourceAvailability, Topology, TransitionPosition, Version,
+            MediaPlayerSourceID, MediaPoolClipDescription, MixEffectBlockCapabilities, Payload,
+            ProductName, SourceAvailability, Topology, TransitionPosition, Version,
         },
         structs::{DVETransitionStyle, EqualiserRange, TallyFlags, VideoMode, VideoSource},
     },
@@ -73,6 +73,7 @@ bitflags! {
         const DSK_SOURCES                    = 1 << 23;
         const DSK_PROPERTIES                 = 1 << 24;
         const DSK_STATE                      = 1 << 25;
+        const MEDIA_POOL_CLIP_DESCRIPTION    = 1 << 26;
 
         const PREVIEW_OR_PROGRAM_SOURCE = Self::PREVIEW_SOURCE.bits() | Self::PROGRAM_SOURCE.bits();
         const UNSUPPORTED_COMMAND            = 1 << 31;
@@ -139,6 +140,12 @@ pub struct AtemState {
     /// [SetupFileUpload]: crate::protocol::atom::SetupFileUpload
     /// [SetupFileDownload]: crate::protocol::atom::SetupFileDownload
     pub media_player_frame_descriptions: HashMap<u8, MediaPlayerFrameDescription>,
+
+    /// Media pool clip descriptions, keyed by clip slot.
+    ///
+    /// This is the only source of clip names: `MPfe` describes stills, and
+    /// `RCPS` only reports playback state.
+    pub media_pool_clip_descriptions: HashMap<u8, MediaPoolClipDescription>,
 
     /// Colour generator configurations.
     ///
@@ -349,6 +356,13 @@ impl AtemState {
                     self.media_player_frame_descriptions
                         .insert(mpfe.index as u8, mpfe.clone());
                     updated_fields |= StateUpdate::MEDIA_PLAYER_FRAME_DESCRIPTION;
+                }
+
+                Payload::MediaPoolClipDescription(mpcs) => {
+                    debug!(?mpcs, "updated media pool clip description");
+                    self.media_pool_clip_descriptions
+                        .insert(mpcs.index, mpcs.clone());
+                    updated_fields |= StateUpdate::MEDIA_POOL_CLIP_DESCRIPTION;
                 }
 
                 Payload::MediaPlayerSource(mpce) => {
@@ -692,6 +706,32 @@ mod test {
         let atom = Atom::read(&mut Cursor::new(&cmd))?;
         let updated = state.update_state(std::slice::from_ref(&atom))?;
         assert!(updated.contains(StateUpdate::INPUT_PROPERTIES));
+        Ok(())
+    }
+
+    #[test]
+    fn media_pool_clip_description_lands_in_state() -> crate::Result<()> {
+        let mut state = AtemState::default();
+
+        let mut cmd = hex::decode("004c00004d504353")?;
+        cmd.push(2); // clip slot
+        cmd.push(1); // used
+        let mut name = [0u8; 64];
+        name[..9].copy_from_slice(b"intro.mov");
+        cmd.extend_from_slice(&name);
+        cmd.extend_from_slice(&900u16.to_be_bytes());
+
+        let atom = Atom::read(&mut Cursor::new(&cmd))?;
+        let updated = state.update_state(std::slice::from_ref(&atom))?;
+        assert!(updated.contains(StateUpdate::MEDIA_POOL_CLIP_DESCRIPTION));
+
+        let clip = state
+            .media_pool_clip_descriptions
+            .get(&2)
+            .expect("clip description stored");
+        assert_eq!(clip.name, "intro.mov");
+        assert!(clip.is_used);
+        assert_eq!(clip.frames, 900);
         Ok(())
     }
 
